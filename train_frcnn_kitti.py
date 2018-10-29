@@ -35,6 +35,20 @@ def train_kitti():
     cfg.model_path = './model/kitti_frcnn_last.hdf5'
     cfg.simple_label_file = 'kitti_simple_label.txt'
 
+    # Get data and make train/test split :
+    #            all_images = [{'filepath: ...', 
+    #                           'width: ...', 
+    #                           'height: ...',
+    #                           'bboxes: ...',
+    #                           'imageset: ...'},
+    #                         ... ]
+    #            classes_count = {'pedestrian: X',
+    #                             'car: Y',
+    #                             ...}
+    #            class_mapping = {'pedestrian: 0',
+    #                             'car: 1',
+    #                             ...
+    #                             'bg: N'}
     all_images, classes_count, class_mapping = get_data(cfg.simple_label_file)
 
     if 'bg' not in classes_count:
@@ -142,10 +156,13 @@ def train_kitti():
 
                 X, Y, img_data = next(data_gen_train)
 
+                # --- TRAIN RPN ---
                 loss_rpn = model_rpn.train_on_batch(X, Y)
 
+                # --- PREDICT WITH RPN ---
                 P_rpn = model_rpn.predict_on_batch(X)
 
+                # --- PROJECT PREDICTIONS ON FEATURE MAP TO GET PROPOSALS ---
                 result = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], cfg, K.image_dim_ordering(), use_regr=True,
                                                 overlap_thresh=0.7,
                                                 max_boxes=300)
@@ -157,6 +174,7 @@ def train_kitti():
                     rpn_accuracy_for_epoch.append(0)
                     continue
 
+                # --- BALANCE CLASSES ---
                 neg_samples = np.where(Y1[0, :, -1] == 1)
                 pos_samples = np.where(Y1[0, :, -1] == 0)
 
@@ -194,10 +212,12 @@ def train_kitti():
                         sel_samples = random.choice(neg_samples)
                     else:
                         sel_samples = random.choice(pos_samples)
-
+                        
+                # --- TRAIN CLASSIFIER ---
                 loss_class = model_classifier.train_on_batch([X, X2[:, sel_samples, :]],
                                                              [Y1[:, sel_samples, :], Y2[:, sel_samples, :]])
 
+                # --- SHOW ITERATION PROGRESS ---
                 losses[iter_num, 0] = loss_rpn[1]
                 losses[iter_num, 1] = loss_rpn[2]
 
@@ -211,7 +231,8 @@ def train_kitti():
                                [('rpn_cls', np.mean(losses[:iter_num, 0])), ('rpn_regr', np.mean(losses[:iter_num, 1])),
                                 ('detector_cls', np.mean(losses[:iter_num, 2])),
                                 ('detector_regr', np.mean(losses[:iter_num, 3]))])
-
+                
+                # --- SHOW EPOCH RESULTS AND SAVE WEIGHTS IF BETTER ---
                 if iter_num == epoch_length:
                     loss_rpn_cls = np.mean(losses[:, 0])
                     loss_rpn_regr = np.mean(losses[:, 1])
